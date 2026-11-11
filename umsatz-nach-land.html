@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Umsatzanteile nach Land</title>
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      --ink: #1a1a1a;
+      --muted: #5c5c5c;
+      --line: #d8d8d8;
+      --bg: #f7f7f5;
+      --card: #fff;
+      --accent: #0b5fff;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: "Segoe UI", system-ui, sans-serif;
+      color: var(--ink);
+      background: var(--bg);
+      line-height: 1.45;
+    }
+
+    .wrap {
+      max-width: 920px;
+      margin: 0 auto;
+      padding: 24px 20px 48px;
+    }
+
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: center;
+      margin-bottom: 20px;
+      padding: 16px;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+
+    .controls label.file-btn,
+    .controls button {
+      appearance: none;
+      border: 1px solid var(--line);
+      background: #fff;
+      color: var(--ink);
+      padding: 8px 14px;
+      border-radius: 6px;
+      font: inherit;
+      cursor: pointer;
+    }
+
+    .controls button.primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+    }
+
+    .controls button:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+
+    .controls input[type="file"] { display: none; }
+
+    .drop {
+      flex: 1 1 220px;
+      min-height: 42px;
+      display: flex;
+      align-items: center;
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+
+    .drop.over { color: var(--accent); font-weight: 600; }
+
+    .status {
+      margin: 0 0 16px;
+      color: var(--muted);
+      font-size: 0.92rem;
+    }
+
+    .status.error { color: #b00020; }
+
+    .report { display: none; }
+    .report.visible { display: block; }
+
+    .report-header {
+      margin-bottom: 20px;
+    }
+
+    .report-header h1 {
+      margin: 0 0 6px;
+      font-size: 1.55rem;
+      font-weight: 700;
+    }
+
+    .meta {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+
+    .section {
+      margin-bottom: 28px;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 18px 18px 12px;
+    }
+
+    .section h2 {
+      margin: 0 0 12px;
+      font-size: 1.1rem;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.95rem;
+    }
+
+    th, td {
+      padding: 8px 10px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: middle;
+    }
+
+    th {
+      font-weight: 600;
+      color: var(--muted);
+      font-size: 0.85rem;
+      text-transform: uppercase;
+      letter-spacing: 0.02em;
+    }
+
+    td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+    td.flag { width: 2.5rem; text-align: center; padding-right: 4px; }
+    td.flag img { width: 24px; height: 18px; object-fit: cover; border-radius: 2px; vertical-align: middle; display: inline-block; }
+    .legend-flag { width: 16px; height: 12px; object-fit: cover; border-radius: 1px; vertical-align: middle; margin-right: 4px; }
+
+    .chart-wrap {
+      position: relative;
+      max-width: 640px;
+      margin: 0 auto;
+      height: 360px;
+    }
+
+    @media print {
+      body { background: #fff; }
+      .controls, .status { display: none !important; }
+      .wrap { max-width: none; padding: 0; }
+      .section {
+        border: none;
+        border-radius: 0;
+        padding: 0;
+        margin-bottom: 22px;
+        break-inside: avoid;
+      }
+      .report-header h1 { font-size: 18pt; }
+      .chart-wrap { height: 320px; max-width: none; }
+      @page { margin: 14mm; size: A4; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="controls" id="controls">
+      <label class="file-btn">
+        Datei wählen
+        <input type="file" id="fileInput" accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" />
+      </label>
+      <div class="drop" id="dropZone">oder Positionsjournal (.xlsx) hierher ziehen</div>
+      <button type="button" class="primary" id="printBtn" disabled>PDF drucken</button>
+    </div>
+
+    <p class="status" id="status">Positionsjournal-Export laden (Spalten ISOA2LAND, UMSATZ_NETTO).</p>
+
+    <div class="report" id="report">
+      <header class="report-header">
+        <h1>Umsatzanteile nach Land</h1>
+        <p class="meta" id="metaLine"></p>
+      </header>
+
+      <section class="section">
+        <h2>Top 10 nach Umsatz (Netto)</h2>
+        <table>
+          <thead>
+            <tr>
+              <th class="flag" scope="col"></th>
+              <th scope="col">Land</th>
+              <th class="num" scope="col">Umsatz</th>
+              <th class="num" scope="col">Anteil</th>
+            </tr>
+          </thead>
+          <tbody id="topTableBody"></tbody>
+        </table>
+      </section>
+
+      <section class="section">
+        <h2>Alle Länder</h2>
+        <div class="chart-wrap">
+          <canvas id="pieChart"></canvas>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <script>
+    const COUNTRY_NAMES = {
+      AD: "Andorra", AE: "Vereinigte Arabische Emirate", AL: "Albanien", AM: "Armenien",
+      AT: "Österreich", AU: "Australien", AZ: "Aserbaidschan", BA: "Bosnien und Herzegowina",
+      BE: "Belgien", BG: "Bulgarien", BY: "Belarus", CA: "Kanada", CH: "Schweiz",
+      CN: "China", CY: "Zypern", CZ: "Tschechien", DE: "Deutschland", DK: "Dänemark",
+      EE: "Estland", ES: "Spanien", FI: "Finnland", FR: "Frankreich", GB: "Großbritannien",
+      GE: "Georgien", GR: "Griechenland", HR: "Kroatien", HU: "Ungarn", IE: "Irland",
+      IL: "Israel", IS: "Island", IT: "Italien", JP: "Japan", KR: "Südkorea",
+      LI: "Liechtenstein", LT: "Litauen", LU: "Luxemburg", LV: "Lettland",
+      MD: "Moldau", ME: "Montenegro", MK: "Nordmazedonien", MT: "Malta",
+      NL: "Niederlande", NO: "Norwegen", NZ: "Neuseeland", PL: "Polen",
+      PT: "Portugal", RO: "Rumänien", RS: "Serbien", RU: "Russland",
+      SE: "Schweden", SI: "Slowenien", SK: "Slowakei", SM: "San Marino",
+      TR: "Türkei", UA: "Ukraine", US: "USA", VA: "Vatikanstadt", XK: "Kosovo"
+    };
+
+    const MONTH_NAMES = [
+      "Januar", "Februar", "März", "April", "Mai", "Juni",
+      "Juli", "August", "September", "Oktober", "November", "Dezember"
+    ];
+
+    const PALETTE = [
+      "#0b5fff", "#e4572e", "#17bebb", "#f3a712", "#6a4c93",
+      "#2a9d8f", "#e76f51", "#264653", "#8ac926", "#1982c4",
+      "#ff595e", "#ffca3a", "#6a994e", "#bc4749", "#457b9d",
+      "#f4a261", "#2b2d42", "#ef476f", "#06d6a0", "#118ab2",
+      "#073b4c", "#9b5de5"
+    ];
+
+    const fileInput = document.getElementById("fileInput");
+    const dropZone = document.getElementById("dropZone");
+    const printBtn = document.getElementById("printBtn");
+    const statusEl = document.getElementById("status");
+    const reportEl = document.getElementById("report");
+    const metaLine = document.getElementById("metaLine");
+    const topTableBody = document.getElementById("topTableBody");
+    let pieChart = null;
+
+    const eur = new Intl.NumberFormat("de-DE", {
+      style: "currency",
+      currency: "EUR"
+    });
+
+    const pct = new Intl.NumberFormat("de-DE", {
+      style: "percent",
+      minimumFractionDigits: 1,
+      maximumFractionDigits: 1
+    });
+
+    function setStatus(msg, isError) {
+      statusEl.textContent = msg;
+      statusEl.classList.toggle("error", !!isError);
+    }
+
+    function flagImg(code, cssClass) {
+      if (!code || code === "??" || !/^[A-Za-z]{2}$/.test(code)) {
+        return `<span class="${cssClass || ""}" title="Unbekannt" aria-label="Unbekannt">🏳️</span>`;
+      }
+      const cc = code.toLowerCase();
+      const cls = cssClass ? ` class="${cssClass}"` : "";
+      return `<img${cls} src="https://flagcdn.com/24x18/${cc}.png" srcset="https://flagcdn.com/48x36/${cc}.png 2x" width="24" height="18" alt="${cc.toUpperCase()}" loading="lazy" />`;
+    }
+
+    function countryLabel(code) {
+      if (!code || code === "??") return "Unbekannt";
+      const cc = code.toUpperCase();
+      return COUNTRY_NAMES[cc] || cc;
+    }
+
+    function monthLabelFromFilename(name) {
+      const m = String(name || "").match(/(20\d{2})[_-](\d{2})/);
+      if (!m) return null;
+      const year = m[1];
+      const month = Number(m[2]);
+      if (month < 1 || month > 12) return null;
+      return MONTH_NAMES[month - 1] + " " + year;
+    }
+
+    function excelSerialToDate(n) {
+      if (typeof n !== "number" || !isFinite(n)) return null;
+      const utc = Date.UTC(1899, 11, 30) + Math.round(n * 86400000);
+      return new Date(utc);
+    }
+
+    function monthLabelFromDates(dates) {
+      const valid = dates.filter(Boolean);
+      if (!valid.length) return null;
+      const months = new Set(
+        valid.map((d) => d.getUTCFullYear() + "-" + String(d.getUTCMonth() + 1).padStart(2, "0"))
+      );
+      if (months.size === 1) {
+        const [y, mo] = [...months][0].split("-");
+        return MONTH_NAMES[Number(mo) - 1] + " " + y;
+      }
+      const sorted = [...valid].sort((a, b) => a - b);
+      const fmt = (d) =>
+        String(d.getUTCDate()).padStart(2, "0") + "." +
+        String(d.getUTCMonth() + 1).padStart(2, "0") + "." +
+        d.getUTCFullYear();
+      return fmt(sorted[0]) + " – " + fmt(sorted[sorted.length - 1]);
+    }
+
+    function findHeaderIndex(headers, name) {
+      const want = name.toUpperCase();
+      return headers.findIndex((h) => String(h || "").trim().toUpperCase() === want);
+    }
+
+    function aggregateRows(rows) {
+      if (!rows.length) throw new Error("Die Datei enthält keine Zeilen.");
+      const headers = rows[0].map((h) => String(h ?? "").trim());
+      const iLand = findHeaderIndex(headers, "ISOA2LAND");
+      const iNetto = findHeaderIndex(headers, "UMSATZ_NETTO");
+      const iBeleg = findHeaderIndex(headers, "BELEGDAT");
+
+      if (iLand < 0 || iNetto < 0) {
+        throw new Error("Erforderliche Spalten fehlen: ISOA2LAND und UMSATZ_NETTO.");
+      }
+
+      const sums = new Map();
+      const dates = [];
+
+      for (let r = 1; r < rows.length; r++) {
+        const row = rows[r];
+        if (!row || !row.length) continue;
+
+        let land = row[iLand];
+        land = land == null || String(land).trim() === "" ? "??" : String(land).trim().toUpperCase();
+
+        let umsatz = row[iNetto];
+        if (typeof umsatz === "string") {
+          umsatz = umsatz.replace(/\s/g, "").replace(/\./g, "").replace(",", ".");
+        }
+        umsatz = Number(umsatz);
+        if (!isFinite(umsatz)) umsatz = 0;
+
+        sums.set(land, (sums.get(land) || 0) + umsatz);
+
+        if (iBeleg >= 0) {
+          const raw = row[iBeleg];
+          if (raw instanceof Date) dates.push(raw);
+          else if (typeof raw === "number") dates.push(excelSerialToDate(raw));
+          else if (typeof raw === "string" && raw) {
+            const d = new Date(raw);
+            if (!isNaN(d)) dates.push(d);
+          }
+        }
+      }
+
+      const total = [...sums.values()].reduce((a, b) => a + b, 0);
+      const items = [...sums.entries()]
+        .map(([code, revenue]) => ({
+          code,
+          name: countryLabel(code),
+          flagHtml: flagImg(code),
+          revenue,
+          share: total === 0 ? 0 : revenue / total
+        }))
+        .sort((a, b) => b.revenue - a.revenue);
+
+      return { items, total, dates };
+    }
+
+    function renderTopTable(items) {
+      const top = items.slice(0, 10);
+      topTableBody.innerHTML = top.map((it) => `
+        <tr>
+          <td class="flag">${it.flagHtml}</td>
+          <td>${escapeHtml(it.name)}</td>
+          <td class="num">${eur.format(it.revenue)}</td>
+          <td class="num">${pct.format(it.share)}</td>
+        </tr>
+      `).join("");
+    }
+
+    function escapeHtml(s) {
+      return String(s)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+
+    function renderPie(items) {
+      const labels = items.map((it) => it.name);
+      const data = items.map((it) => Math.max(it.revenue, 0));
+      const colors = items.map((_, i) => PALETTE[i % PALETTE.length]);
+
+      if (pieChart) {
+        pieChart.destroy();
+        pieChart = null;
+      }
+
+      const ctx = document.getElementById("pieChart").getContext("2d");
+      pieChart = new Chart(ctx, {
+        type: "pie",
+        data: {
+          labels,
+          datasets: [{
+            data,
+            backgroundColor: colors,
+            borderWidth: 1,
+            borderColor: "#fff"
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: {
+              position: "right",
+              labels: {
+                boxWidth: 12,
+                font: { size: 11 },
+                generateLabels(chart) {
+                  const ds = chart.data.datasets[0];
+                  return chart.data.labels.map((label, i) => ({
+                    text: label + " (" + pct.format(items[i].share) + ")",
+                    fillStyle: ds.backgroundColor[i],
+                    strokeStyle: "#fff",
+                    lineWidth: 1,
+                    hidden: false,
+                    index: i
+                  }));
+                }
+              }
+            },
+            tooltip: {
+              callbacks: {
+                label(ctx) {
+                  const it = items[ctx.dataIndex];
+                  return " " + it.name + ": " + eur.format(it.revenue) + " (" + pct.format(it.share) + ")";
+                }
+              }
+            }
+          }
+        }
+      });
+    }
+
+    function showReport(result, fileName) {
+      const period =
+        monthLabelFromFilename(fileName) ||
+        monthLabelFromDates(result.dates) ||
+        "Zeitraum unbekannt";
+
+      metaLine.textContent =
+        period +
+        " · Netto-Umsatz gesamt: " +
+        eur.format(result.total) +
+        " · " +
+        result.items.length +
+        " Länder · Datei: " +
+        fileName;
+
+      renderTopTable(result.items);
+      renderPie(result.items);
+      reportEl.classList.add("visible");
+      printBtn.disabled = false;
+      setStatus("Auswertung bereit. Mit „PDF drucken“ speichern.");
+    }
+
+    async function handleFile(file) {
+      if (!file) return;
+      setStatus("Lade „" + file.name + "“ …");
+      printBtn.disabled = true;
+      reportEl.classList.remove("visible");
+
+      try {
+        const buf = await file.arrayBuffer();
+        const wb = XLSX.read(buf, { type: "array", cellDates: true });
+        const sheetName = wb.SheetNames[0];
+        const sheet = wb.Sheets[sheetName];
+        const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: null, raw: true });
+        const result = aggregateRows(rows);
+        showReport(result, file.name);
+      } catch (err) {
+        console.error(err);
+        setStatus(err.message || "Datei konnte nicht gelesen werden.", true);
+      }
+    }
+
+    fileInput.addEventListener("change", () => {
+      const f = fileInput.files && fileInput.files[0];
+      if (f) handleFile(f);
+    });
+
+    printBtn.addEventListener("click", () => window.print());
+
+    ["dragenter", "dragover"].forEach((ev) => {
+      dropZone.addEventListener(ev, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dropZone.classList.add("over");
+      });
+      document.body.addEventListener(ev, (e) => e.preventDefault());
+    });
+
+    ["dragleave", "drop"].forEach((ev) => {
+      dropZone.addEventListener(ev, (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dropZone.classList.remove("over");
+      });
+    });
+
+    dropZone.addEventListener("drop", (e) => {
+      const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+      if (f) handleFile(f);
+    });
+
+    // Expose for smoke tests in Node/automation if needed
+    window.__umsatzLand = { aggregateRows, countryLabel, flagImg, monthLabelFromFilename, showReport };
+  </script>
+</body>
+</html>
